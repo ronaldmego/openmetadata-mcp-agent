@@ -1,5 +1,22 @@
 # OpenMetadata Agent - Capa Agéntica para OpenMetadata
 
+## Registro de Puertos (Obligatorio)
+
+Este proyecto comparte servidor con otros proyectos. **Antes de usar o cambiar cualquier puerto:**
+
+1. Consultar el registro central: `~/maintenance/docs/infrastructure/port-registry.md`
+2. Verificar que el puerto no esté ocupado: `ss -tlnp | grep :<puerto>`
+3. Registrar el puerto elegido en el archivo de registro
+
+| Item | Valor |
+|------|-------|
+| Puerto Prod | `4004` (Tailscale only) |
+| Bind | `100.64.216.28` |
+| URL | http://100.64.216.28:4004 |
+| Proceso | `streamlit run app.py` |
+
+---
+
 ## Visión
 
 **Dar a cualquier organización un asistente conversacional para su catálogo de datos, sin depender de Claude Desktop.**
