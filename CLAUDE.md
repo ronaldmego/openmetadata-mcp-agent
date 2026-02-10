@@ -1,12 +1,6 @@
 # OpenMetadata Agent - Capa Agéntica para OpenMetadata
 
-## Registro de Puertos (Obligatorio)
-
-Este proyecto comparte servidor con otros proyectos. **Antes de usar o cambiar cualquier puerto:**
-
-1. Consultar el registro central: `~/maintenance/docs/infrastructure/port-registry.md`
-2. Verificar que el puerto no esté ocupado: `ss -tlnp | grep :<puerto>`
-3. Registrar el puerto elegido en el archivo de registro
+## Puerto
 
 | Item | Valor |
 |------|-------|
