@@ -22,7 +22,7 @@ import httpx
 load_dotenv(Path(__file__).parent / ".env")
 
 # Configuración
-OPENMETADATA_URL = os.getenv("OPENMETADATA_URL", "http://100.64.216.28:8585")
+OPENMETADATA_URL = os.getenv("OPENMETADATA_URL", "http://localhost:8585")
 OPENMETADATA_TOKEN = os.getenv("OPENMETADATA_TOKEN", "")
 
 # Crear servidor MCP

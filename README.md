@@ -14,13 +14,13 @@ pip install -r requirements.txt
 Necesitas el token JWT de OpenMetadata:
 
 ```bash
-export OPENMETADATA_URL="http://100.64.216.28:8585"
+export OPENMETADATA_URL="http://tu-servidor:8585"
 export OPENMETADATA_TOKEN="tu-jwt-token-aqui"
 ```
 
 ### Obtener el token
 
-1. Ir a http://100.64.216.28:8585
+1. Ir a tu instancia de OpenMetadata (ej: `http://tu-servidor:8585`)
 2. Login como admin
 3. Settings → Bots → Crear bot o usar existente
 4. Copiar el JWT token
