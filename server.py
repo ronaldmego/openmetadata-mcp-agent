@@ -298,6 +298,39 @@ def list_glossary_terms(glossary: str = None, limit: int = 20) -> str:
         return f"Error listando glosario: {str(e)}"
 
 
+@mcp.tool
+def list_domains(limit: int = 50) -> str:
+    """Listar dominios y subdominios de datos del catálogo.
+
+    Args:
+        limit: Máximo de dominios a retornar
+
+    Returns:
+        Lista de dominios con tipo, descripción y subdominios
+    """
+    try:
+        result = api_get("/domains", {"limit": limit})
+        domains = result.get("data", [])
+
+        if not domains:
+            return "No hay dominios registrados"
+
+        output = [f"🏛️ Dominios registrados ({len(domains)}):\n"]
+        for d in domains:
+            name = d.get("name", "")
+            display = d.get("displayName", name)
+            domain_type = d.get("domainType", "")
+            desc = d.get("description", "Sin descripción")[:100]
+            parent = d.get("parent", {})
+            parent_name = parent.get("name", "") if parent else ""
+            parent_str = f" (sub-dominio de: {parent_name})" if parent_name else ""
+            output.append(f"- {display}{parent_str}\n  Tipo: {domain_type}\n  {desc}")
+
+        return "\n".join(output)
+    except Exception as e:
+        return f"Error listando dominios: {str(e)}"
+
+
 if __name__ == "__main__":
     if not OPENMETADATA_TOKEN:
         print("⚠️  ADVERTENCIA: OPENMETADATA_TOKEN no está configurado")

@@ -22,7 +22,8 @@ from server import (
     get_table_details,
     list_databases,
     list_glossary_terms,
-    get_lineage
+    get_lineage,
+    list_domains
 )
 
 # Configuración
@@ -38,6 +39,7 @@ Herramientas disponibles para explorar el catálogo de datos:
 4. list_databases() - Ver todas las bases de datos registradas
 5. get_lineage(asset_name) - Ver el linaje de datos (origen y destino)
 6. list_glossary_terms() - Ver términos del glosario de negocio
+7. list_domains() - Ver dominios y subdominios de datos del catálogo
 """
 
 def init_llm():
@@ -47,9 +49,12 @@ def init_llm():
         temperature=0
     )
 
-def agent_process(query: str, llm) -> str:
-    """Procesar query del usuario usando el agente"""
-    
+def agent_process(query: str, llm) -> dict:
+    """Procesar query del usuario usando el agente.
+
+    Retorna dict con: response, tool_used, tool_params, raw_result, llm_decision
+    """
+
     # Paso 1: Decidir qué herramienta usar
     decision_prompt = f"""Eres un asistente de Data Governance experto. Analiza la pregunta del usuario y decide qué herramienta usar.
 
@@ -68,11 +73,15 @@ Ejemplos:
 - Para bases de datos: FUNCTION: list_databases, PARAMS: none
 - Para linaje: FUNCTION: get_lineage, PARAMS: asset_name=nombre
 - Para glosario: FUNCTION: list_glossary_terms, PARAMS: none
+- Para dominios: FUNCTION: list_domains, PARAMS: none
 """
 
     decision_response = llm.invoke([HumanMessage(content=decision_prompt)])
     decision = decision_response.content.strip()
-    
+
+    tool_used = "unknown"
+    tool_params = {}
+
     # Paso 2: Ejecutar la herramienta
     try:
         if "list_tables" in decision:
@@ -82,14 +91,18 @@ Ejemplos:
                     limit = int(decision.split("limit=")[1].split()[0].strip(","))
                 except:
                     pass
+            tool_used = "list_tables"
+            tool_params = {"limit": limit}
             result = list_tables(limit=limit)
-            
+
         elif "search_catalog" in decision:
             search_term = query  # Default
             if "query=" in decision:
                 search_term = decision.split("query=")[1].split("\n")[0].strip().strip(",")
+            tool_used = "search_catalog"
+            tool_params = {"query": search_term, "limit": 10}
             result = search_catalog(search_term, limit=10)
-            
+
         elif "get_table_details" in decision:
             table_name = ""
             if "table_name=" in decision:
@@ -98,11 +111,15 @@ Ejemplos:
                 # Intentar extraer de la pregunta
                 words = query.lower().replace("tabla", "").replace("table", "").split()
                 table_name = words[-1] if words else ""
+            tool_used = "get_table_details"
+            tool_params = {"table_name": table_name}
             result = get_table_details(table_name)
-            
+
         elif "list_databases" in decision:
+            tool_used = "list_databases"
+            tool_params = {}
             result = list_databases()
-            
+
         elif "get_lineage" in decision:
             asset_name = ""
             if "asset_name=" in decision:
@@ -110,17 +127,27 @@ Ejemplos:
             if not asset_name:
                 words = query.split()
                 asset_name = words[-1] if words else ""
+            tool_used = "get_lineage"
+            tool_params = {"asset_name": asset_name}
             result = get_lineage(asset_name)
-            
+
         elif "list_glossary_terms" in decision:
+            tool_used = "list_glossary_terms"
+            tool_params = {}
             result = list_glossary_terms()
-            
+
+        elif "list_domains" in decision:
+            tool_used = "list_domains"
+            tool_params = {}
+            result = list_domains()
+
         else:
+            tool_used = "none"
             result = "No pude determinar qué herramienta usar para esta pregunta."
-            
+
     except Exception as e:
         result = f"Error ejecutando la consulta: {str(e)}"
-    
+
     # Paso 3: Formatear respuesta natural
     format_prompt = f"""Eres un asistente de Data Governance amigable. Basándote en los datos obtenidos del catálogo, responde la pregunta del usuario de forma clara y útil.
 
@@ -138,7 +165,14 @@ Instrucciones:
 """
 
     final_response = llm.invoke([HumanMessage(content=format_prompt)])
-    return final_response.content
+
+    return {
+        "response": final_response.content,
+        "tool_used": tool_used,
+        "tool_params": tool_params,
+        "raw_result": result,
+        "llm_decision": decision,
+    }
 
 # ============== STREAMLIT UI ==============
 
@@ -195,6 +229,13 @@ if "llm" not in st.session_state:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        if "debug" in message:
+            d = message["debug"]
+            with st.expander(f"🔧 Tool: `{d['tool_used']}` {d['tool_params']}", expanded=False):
+                st.markdown("**Decisión del LLM:**")
+                st.code(d["llm_decision"], language="text")
+                st.markdown("**Resultado crudo de la herramienta:**")
+                st.code(d["raw_result"], language="text")
 
 # Input del usuario
 if prompt := st.chat_input("Pregunta sobre tu catálogo de datos..."):
@@ -207,9 +248,21 @@ if prompt := st.chat_input("Pregunta sobre tu catálogo de datos..."):
     with st.chat_message("assistant"):
         with st.spinner("Consultando catálogo..."):
             try:
-                response = agent_process(prompt, st.session_state.llm)
-                st.markdown(response)
-                st.session_state.messages.append({"role": "assistant", "content": response})
+                result = agent_process(prompt, st.session_state.llm)
+                st.markdown(result["response"])
+
+                # Debug: mostrar herramienta usada
+                with st.expander(f"🔧 Tool: `{result['tool_used']}` {result['tool_params']}", expanded=False):
+                    st.markdown("**Decisión del LLM:**")
+                    st.code(result["llm_decision"], language="text")
+                    st.markdown("**Resultado crudo de la herramienta:**")
+                    st.code(result["raw_result"], language="text")
+
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": result["response"],
+                    "debug": result,
+                })
             except Exception as e:
                 error_msg = f"❌ Error: {str(e)}"
                 st.error(error_msg)
