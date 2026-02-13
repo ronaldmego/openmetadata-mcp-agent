@@ -2,6 +2,7 @@
 """
 OpenMetadata Agent - Chat UI con Streamlit
 Interfaz conversacional para explorar el catálogo de datos.
+Usa function calling nativo de Gemini para selección automática de tools.
 """
 
 import os
@@ -13,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 # Importar tools del MCP server
 from server import (
@@ -30,149 +31,87 @@ from server import (
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
 OPENMETADATA_URL = os.getenv("OPENMETADATA_URL", "http://localhost:8585")
 
-# Info de herramientas para el LLM
-TOOLS_INFO = """
-Herramientas disponibles para explorar el catálogo de datos:
-1. search_catalog(query) - Buscar assets por término (tablas, pipelines, etc.)
-2. list_tables(limit) - Listar tablas disponibles con su esquema
-3. get_table_details(table_name) - Ver columnas y detalles de una tabla específica
-4. list_databases() - Ver todas las bases de datos registradas
-5. get_lineage(asset_name) - Ver el linaje de datos (origen y destino)
-6. list_glossary_terms() - Ver términos del glosario de negocio
-7. list_domains() - Ver dominios y subdominios de datos del catálogo
-"""
+# Registro de tools: lista y lookup por nombre
+TOOLS = [search_catalog, list_tables, get_table_details, list_databases,
+         list_glossary_terms, get_lineage, list_domains]
+TOOLS_BY_NAME = {fn.__name__: fn for fn in TOOLS}
+
+SYSTEM_PROMPT = (
+    "Eres un asistente de Data Governance experto. "
+    "Usa las herramientas disponibles para responder preguntas sobre el catálogo de datos de OpenMetadata. "
+    "Si una herramienta no devuelve resultados útiles, intenta con otra estrategia o herramienta diferente. "
+    "Responde siempre en español. Usa formato markdown para mejor legibilidad."
+)
+
+MAX_TOOL_ITERATIONS = 10
+
 
 def init_llm():
-    """Inicializar el modelo de Gemini"""
-    return ChatGoogleGenerativeAI(
-        model=GEMINI_MODEL,
-        temperature=0
-    )
+    """Inicializar el modelo de Gemini con tools bindeados"""
+    llm = ChatGoogleGenerativeAI(model=GEMINI_MODEL, temperature=0)
+    return llm.bind_tools(TOOLS)
+
 
 def agent_process(query: str, llm) -> dict:
-    """Procesar query del usuario usando el agente.
+    """Procesar query usando function calling nativo de Gemini.
 
-    Retorna dict con: response, tool_used, tool_params, raw_result, llm_decision
+    El LLM decide qué tools usar, puede encadenar varias, y responde
+    cuando tiene suficiente información.
+
+    Retorna dict con: response, tool_trace (lista de calls ejecutados)
     """
+    messages = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=query),
+    ]
 
-    # Paso 1: Decidir qué herramienta usar
-    decision_prompt = f"""Eres un asistente de Data Governance experto. Analiza la pregunta del usuario y decide qué herramienta usar.
+    tool_trace = []  # Para el debug expander
 
-{TOOLS_INFO}
+    for _ in range(MAX_TOOL_ITERATIONS):
+        ai_message = llm.invoke(messages)
+        messages.append(ai_message)
 
-Pregunta: "{query}"
+        # Si no hay tool calls, tenemos la respuesta final
+        if not ai_message.tool_calls:
+            return {
+                "response": ai_message.content,
+                "tool_trace": tool_trace,
+            }
 
-Responde SOLO con:
-FUNCTION: nombre_de_funcion
-PARAMS: parametro=valor
+        # Ejecutar cada tool call
+        for tool_call in ai_message.tool_calls:
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
+            tool_fn = TOOLS_BY_NAME.get(tool_name)
 
-Ejemplos:
-- Para listar tablas: FUNCTION: list_tables, PARAMS: limit=15
-- Para buscar: FUNCTION: search_catalog, PARAMS: query=término
-- Para detalles: FUNCTION: get_table_details, PARAMS: table_name=nombre_tabla
-- Para bases de datos: FUNCTION: list_databases, PARAMS: none
-- Para linaje: FUNCTION: get_lineage, PARAMS: asset_name=nombre
-- Para glosario: FUNCTION: list_glossary_terms, PARAMS: none
-- Para dominios: FUNCTION: list_domains, PARAMS: none
-"""
-
-    decision_response = llm.invoke([HumanMessage(content=decision_prompt)])
-    decision = decision_response.content.strip()
-
-    tool_used = "unknown"
-    tool_params = {}
-
-    # Paso 2: Ejecutar la herramienta
-    try:
-        if "list_tables" in decision:
-            limit = 15
-            if "limit=" in decision:
+            if tool_fn is None:
+                result = f"Tool '{tool_name}' no encontrada"
+            else:
                 try:
-                    limit = int(decision.split("limit=")[1].split()[0].strip(","))
-                except:
-                    pass
-            tool_used = "list_tables"
-            tool_params = {"limit": limit}
-            result = list_tables(limit=limit)
+                    result = tool_fn(**tool_args)
+                except Exception as e:
+                    result = f"Error ejecutando {tool_name}: {str(e)}"
 
-        elif "search_catalog" in decision:
-            search_term = query  # Default
-            if "query=" in decision:
-                search_term = decision.split("query=")[1].split("\n")[0].strip().strip(",")
-            tool_used = "search_catalog"
-            tool_params = {"query": search_term, "limit": 10}
-            result = search_catalog(search_term, limit=10)
+            # Registrar para debug
+            tool_trace.append({
+                "tool": tool_name,
+                "args": tool_args,
+                "result": str(result),
+            })
 
-        elif "get_table_details" in decision:
-            table_name = ""
-            if "table_name=" in decision:
-                table_name = decision.split("table_name=")[1].split("\n")[0].strip().strip(",")
-            if not table_name:
-                # Intentar extraer de la pregunta
-                words = query.lower().replace("tabla", "").replace("table", "").split()
-                table_name = words[-1] if words else ""
-            tool_used = "get_table_details"
-            tool_params = {"table_name": table_name}
-            result = get_table_details(table_name)
+            # Devolver resultado al LLM
+            messages.append(ToolMessage(
+                content=str(result),
+                tool_call_id=tool_call["id"],
+                name=tool_name,
+            ))
 
-        elif "list_databases" in decision:
-            tool_used = "list_databases"
-            tool_params = {}
-            result = list_databases()
-
-        elif "get_lineage" in decision:
-            asset_name = ""
-            if "asset_name=" in decision:
-                asset_name = decision.split("asset_name=")[1].split("\n")[0].strip().strip(",")
-            if not asset_name:
-                words = query.split()
-                asset_name = words[-1] if words else ""
-            tool_used = "get_lineage"
-            tool_params = {"asset_name": asset_name}
-            result = get_lineage(asset_name)
-
-        elif "list_glossary_terms" in decision:
-            tool_used = "list_glossary_terms"
-            tool_params = {}
-            result = list_glossary_terms()
-
-        elif "list_domains" in decision:
-            tool_used = "list_domains"
-            tool_params = {}
-            result = list_domains()
-
-        else:
-            tool_used = "none"
-            result = "No pude determinar qué herramienta usar para esta pregunta."
-
-    except Exception as e:
-        result = f"Error ejecutando la consulta: {str(e)}"
-
-    # Paso 3: Formatear respuesta natural
-    format_prompt = f"""Eres un asistente de Data Governance amigable. Basándote en los datos obtenidos del catálogo, responde la pregunta del usuario de forma clara y útil.
-
-Pregunta del usuario: "{query}"
-
-Datos del catálogo:
-{result}
-
-Instrucciones:
-- Responde en español
-- Sé conciso pero informativo
-- Si hay muchos resultados, resume los más relevantes
-- Si no hay resultados, sugiere alternativas
-- Usa formato markdown para mejor legibilidad
-"""
-
-    final_response = llm.invoke([HumanMessage(content=format_prompt)])
-
+    # Fallback si se alcanzó el límite de iteraciones
     return {
-        "response": final_response.content,
-        "tool_used": tool_used,
-        "tool_params": tool_params,
-        "raw_result": result,
-        "llm_decision": decision,
+        "response": ai_message.content or "Se alcanzó el límite de iteraciones del agente.",
+        "tool_trace": tool_trace,
     }
+
 
 # ============== STREAMLIT UI ==============
 
@@ -190,25 +129,28 @@ st.caption(f"Asistente conversacional para tu catálogo de datos | Conectado a: 
 with st.sidebar:
     st.header("ℹ️ Acerca de")
     st.markdown("""
-    Este agente te permite explorar el catálogo de datos 
+    Este agente te permite explorar el catálogo de datos
     de OpenMetadata usando lenguaje natural.
-    
+
     **Ejemplos de preguntas:**
     - ¿Cuántas tablas tenemos?
     - ¿Qué columnas tiene la tabla customers?
     - Busca tablas relacionadas con ventas
     - ¿De dónde vienen los datos de la tabla orders?
     - ¿Qué bases de datos tenemos?
+    - ¿Qué dominios tiene el catálogo?
     """)
-    
+
     st.divider()
-    
+
     st.header("⚙️ Configuración")
     st.text(f"Modelo: {GEMINI_MODEL}")
     st.text(f"OpenMetadata: {OPENMETADATA_URL}")
-    
+    tools_list = ", ".join(fn.__name__ for fn in TOOLS)
+    st.text(f"Tools ({len(TOOLS)}): {tools_list}")
+
     st.divider()
-    
+
     if st.button("🗑️ Limpiar chat"):
         st.session_state.messages = []
         st.rerun()
@@ -225,17 +167,27 @@ if "llm" not in st.session_state:
         st.error(f"Error inicializando Gemini: {e}")
         st.stop()
 
+
+def render_debug(tool_trace: list):
+    """Renderizar debug expander con el trace de tools usadas"""
+    if not tool_trace:
+        return
+    summary = " → ".join(f"`{t['tool']}`" for t in tool_trace)
+    with st.expander(f"🔧 Tools: {summary}", expanded=False):
+        for i, t in enumerate(tool_trace):
+            st.markdown(f"**Paso {i + 1}: `{t['tool']}`**")
+            st.code(f"args: {t['args']}", language="json")
+            st.code(t["result"], language="text")
+            if i < len(tool_trace) - 1:
+                st.divider()
+
+
 # Mostrar historial de mensajes
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        if "debug" in message:
-            d = message["debug"]
-            with st.expander(f"🔧 Tool: `{d['tool_used']}` {d['tool_params']}", expanded=False):
-                st.markdown("**Decisión del LLM:**")
-                st.code(d["llm_decision"], language="text")
-                st.markdown("**Resultado crudo de la herramienta:**")
-                st.code(d["raw_result"], language="text")
+        if "tool_trace" in message:
+            render_debug(message["tool_trace"])
 
 # Input del usuario
 if prompt := st.chat_input("Pregunta sobre tu catálogo de datos..."):
@@ -243,25 +195,19 @@ if prompt := st.chat_input("Pregunta sobre tu catálogo de datos..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-    
+
     # Generar respuesta
     with st.chat_message("assistant"):
         with st.spinner("Consultando catálogo..."):
             try:
                 result = agent_process(prompt, st.session_state.llm)
                 st.markdown(result["response"])
-
-                # Debug: mostrar herramienta usada
-                with st.expander(f"🔧 Tool: `{result['tool_used']}` {result['tool_params']}", expanded=False):
-                    st.markdown("**Decisión del LLM:**")
-                    st.code(result["llm_decision"], language="text")
-                    st.markdown("**Resultado crudo de la herramienta:**")
-                    st.code(result["raw_result"], language="text")
+                render_debug(result["tool_trace"])
 
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": result["response"],
-                    "debug": result,
+                    "tool_trace": result["tool_trace"],
                 })
             except Exception as e:
                 error_msg = f"❌ Error: {str(e)}"

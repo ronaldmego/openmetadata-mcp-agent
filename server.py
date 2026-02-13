@@ -12,6 +12,7 @@ Requiere:
 """
 
 import os
+import re
 import json
 from pathlib import Path
 from dotenv import load_dotenv
@@ -43,6 +44,11 @@ def api_get(endpoint: str, params: dict = None) -> dict:
     return response.json()
 
 
+def strip_html(text: str) -> str:
+    """Remover tags HTML de un string"""
+    return re.sub(r"<[^>]+>", "", text).strip()
+
+
 @mcp.tool
 def search_catalog(query: str, limit: int = 10) -> str:
     """Buscar assets en el catálogo de datos.
@@ -67,7 +73,7 @@ def search_catalog(query: str, limit: int = 10) -> str:
             name = source.get("name", "Sin nombre")
             entity_type = source.get("entityType", "unknown")
             fqn = source.get("fullyQualifiedName", "")
-            desc = source.get("description", "Sin descripción")[:100]
+            desc = strip_html(source.get("description", "Sin descripción"))[:100]
             output.append(f"- [{entity_type}] {name}\n  FQN: {fqn}\n  {desc}")
         
         return "\n".join(output)
@@ -76,14 +82,14 @@ def search_catalog(query: str, limit: int = 10) -> str:
 
 
 @mcp.tool
-def list_tables(database: str = None, schema: str = None, limit: int = 20) -> str:
+def list_tables(database: str = None, schema_name: str = None, limit: int = 20) -> str:
     """Listar tablas del catálogo de datos.
-    
+
     Args:
         database: Filtrar por nombre de database (opcional)
-        schema: Filtrar por nombre de schema (opcional)
+        schema_name: Filtrar por nombre de schema (opcional)
         limit: Máximo de tablas a retornar
-    
+
     Returns:
         Lista de tablas con su descripción
     """
@@ -91,25 +97,25 @@ def list_tables(database: str = None, schema: str = None, limit: int = 20) -> st
         params = {"limit": limit}
         if database:
             params["database"] = database
-        
+
         result = api_get("/tables", params)
         tables = result.get("data", [])
-        
+
         if not tables:
             return "No se encontraron tablas"
-        
+
         # Filtrar por schema si se especifica
-        if schema:
-            tables = [t for t in tables if schema.lower() in t.get("fullyQualifiedName", "").lower()]
-        
+        if schema_name:
+            tables = [t for t in tables if schema_name.lower() in t.get("fullyQualifiedName", "").lower()]
+
         output = [f"Encontradas {len(tables)} tablas:\n"]
         for t in tables:
             name = t.get("name", "")
             fqn = t.get("fullyQualifiedName", "")
-            desc = t.get("description", "Sin descripción")[:80]
+            desc = strip_html(t.get("description", "Sin descripción"))[:80]
             columns = len(t.get("columns", []))
             output.append(f"- {name} ({columns} columnas)\n  FQN: {fqn}\n  {desc}")
-        
+
         return "\n".join(output)
     except Exception as e:
         return f"Error listando tablas: {str(e)}"
@@ -144,7 +150,7 @@ def get_table_details(table_name: str) -> str:
         output = [
             f"📊 Tabla: {table.get('name')}",
             f"FQN: {table.get('fullyQualifiedName')}",
-            f"Descripción: {table.get('description', 'Sin descripción')}",
+            f"Descripción: {strip_html(table.get('description', 'Sin descripción'))}",
             f"Owner: {table.get('owner', {}).get('name', 'Sin owner')}",
             f"",
             f"📋 Columnas ({len(table.get('columns', []))}):"
@@ -153,7 +159,7 @@ def get_table_details(table_name: str) -> str:
         for col in table.get("columns", [])[:20]:  # Limitar a 20 columnas
             col_name = col.get("name", "")
             col_type = col.get("dataType", "")
-            col_desc = col.get("description", "")[:50]
+            col_desc = strip_html(col.get("description", ""))[:50]
             output.append(f"  - {col_name} ({col_type}): {col_desc}")
         
         if len(table.get("columns", [])) > 20:
@@ -259,7 +265,7 @@ def list_databases() -> str:
         for db in databases:
             name = db.get("name", "")
             service = db.get("service", {}).get("name", "")
-            desc = db.get("description", "Sin descripción")[:60]
+            desc = strip_html(db.get("description", "Sin descripción"))[:60]
             output.append(f"- {name} (servicio: {service})\n  {desc}")
         
         return "\n".join(output)
@@ -288,7 +294,7 @@ def list_glossary_terms(glossary: str = None, limit: int = 20) -> str:
         output = [f"📖 Términos de glosario ({len(terms)}):\n"]
         for term in terms:
             name = term.get("name", "")
-            definition = term.get("description", "Sin definición")[:100]
+            definition = strip_html(term.get("description", "Sin definición"))[:100]
             synonyms = term.get("synonyms", [])
             syn_str = f" (sinónimos: {', '.join(synonyms)})" if synonyms else ""
             output.append(f"- {name}{syn_str}\n  {definition}")
@@ -320,7 +326,7 @@ def list_domains(limit: int = 50) -> str:
             name = d.get("name", "")
             display = d.get("displayName", name)
             domain_type = d.get("domainType", "")
-            desc = d.get("description", "Sin descripción")[:100]
+            desc = strip_html(d.get("description", "Sin descripción"))[:100]
             parent = d.get("parent", {})
             parent_name = parent.get("name", "") if parent else ""
             parent_str = f" (sub-dominio de: {parent_name})" if parent_name else ""

@@ -4,6 +4,20 @@ Todos los cambios notables de este proyecto se documentan aquí.
 
 ---
 
+## [0.3.0] - 2026-02-13
+
+### Changed
+- **Function calling nativo de Gemini** - Reemplazado el routing manual (prompt de decisión + if/elif + parseo de strings) por `bind_tools()` nativo de langchain-google-genai. El agente ahora usa un loop conversacional donde Gemini decide qué tools llamar, puede encadenar varias, y reintentar si no encuentra resultados. ([#1](https://github.com/ronaldmego/openmetadata-mcp-client/issues/1))
+- **Descubrimiento dinámico de tools** - Las tools se registran en una lista `TOOLS` y se bindean automáticamente. Para agregar una tool nueva solo hay que importarla y agregarla a la lista, sin tocar prompts ni routing.
+- **Debug mejorado** - El expander ahora muestra la cadena completa de tools (Paso 1 → Paso 2 → ...) con args y resultado de cada una.
+- **Tools visibles en sidebar** - Muestra dinámicamente cuántas y cuáles tools hay disponibles.
+
+### Fixed
+- Descripciones con tags HTML (`<p>...</p>`) ahora se limpian con `strip_html()` en todas las tools.
+- Warning de pydantic por parámetro `schema` en `list_tables` resuelto renombrando a `schema_name`.
+
+---
+
 ## [0.2.0] - 2026-02-13
 
 ### Added
