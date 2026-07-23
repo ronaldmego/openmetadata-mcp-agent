@@ -1,3 +1,12 @@
+> [!IMPORTANT]
+> **This repository moved.** It now lives inside **[data-intelligence-lab](https://github.com/ronaldmego/data-intelligence-lab/tree/main/tracks/data-governance/openmetadata-mcp-agent)** — a single home for Ronald Mego's portfolio demos, grouped by track.
+>
+> **→ New location: [openmetadata-mcp-agent](https://github.com/ronaldmego/data-intelligence-lab/tree/main/tracks/data-governance/openmetadata-mcp-agent)**
+>
+> This repo is **archived** and read-only. Its full commit history was preserved in the move (`git log`, `git blame` and `git log --follow` all work at the new path). The content below is kept as-is so existing links and citations keep resolving.
+
+---
+
 <p align="center">
   <img src="docs/logo.png" alt="OpenMetadata Agent" width="480"/>
 </p>
